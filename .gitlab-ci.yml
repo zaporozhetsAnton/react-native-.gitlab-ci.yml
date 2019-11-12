@@ -1,0 +1,88 @@
+variables:
+  APP_NAME: 'YOUR_APP_NAME'
+  PROJECT_ID: '600'
+  KEYCHAIN_NAME: 'YOUR_APP_NAME-keys'
+  KEYCHAIN_PASSWORD: '$CI_COMMIT_REF_SLUG'
+  MATCH_KEYCHAIN_NAME: 'YOUR_APP_NAME-keys'
+  MATCH_KEYCHAIN_PASSWORD: '$CI_COMMIT_REF_SLUG'
+  GRADLE_USER_HOME: '$CI_PROJECT_DIR/.gradle'
+
+stages:
+  - test
+  - build
+
+test:
+  stage: test
+  image: node:12
+  tags:
+    - docker
+  cache:
+    key: deps
+    paths:
+      - node_modules/
+  interruptible: true
+  before_script:
+    - yarn install --network-concurrency 1 --frozen-lockfile
+  script:
+    - yarn run lint
+    - yarn run test
+
+.deploy_ios:
+  stage: build
+  tags:
+    - ios
+  cache:
+    key: deps_ios
+    paths:
+      - node_modules/
+      - ios/vendor/bundle
+      - ios/.bundle
+  before_script:
+    - yarn install --network-concurrency 1 --frozen-lockfile
+    - ( cd $CI_PROJECT_DIR/ios ; bundle install --path vendor/bundle )
+    - |
+      cat <<EoF > App/Config/index.js
+      export const BASE_URL='$BASE_URL';
+      export const SOCKET_URL='$SOCKET_URL';
+      export const DEEP_LINK_URL='$DEEP_LINK_URL';
+      export const BACKUP_URL='$BACKUP_URL';
+      EoF
+    - yarn run ios-bundle
+  script:
+    - cd $CI_PROJECT_DIR/ios
+    - bundle exec fastlane ios build
+    - upload-ipa --ipa "./build/FarmGate.ipa"
+
+stage_deploy_ios:
+  extends: .deploy_ios
+  variables:
+    BASE_URL: "$BASE_URL_DEV"
+    SOCKET_URL: "$SOCKET_URL_DEV"
+    DEEP_LINK_URL: "$DEEP_LINK_URL_DEV"
+    BACKUP_URL: "$BACKUP_URL_DEV"
+  when: manual
+
+test_deploy_ios:
+  extends: .deploy_ios
+  variables:
+    BASE_URL: "$BASE_URL_TEST"
+    SOCKET_URL: "$SOCKET_URL_TEST"
+    DEEP_LINK_URL: "$DEEP_LINK_URL_TEST"
+    BACKUP_URL: "$BACKUP_URL_TEST"
+  only:
+    - build
+  when: manual
+
+live_testflight:
+  extends: .deploy_ios
+  variables:
+    BASE_URL: "$BASE_URL_LIVE"
+    SOCKET_URL: "$SOCKET_URL_LIVE"
+    DEEP_LINK_URL: "$DEEP_LINK_URL_LIVE"
+    BACKUP_URL: "$BACKUP_URL_LIVE"
+  script:
+    - cd $CI_PROJECT_DIR/ios
+    - bundle exec fastlane ios release
+  only:
+    - build
+  when: manual
